@@ -1,0 +1,162 @@
+# Pain-AcuSystem public configuration
+
+project_dir: ..
+study:
+  name: acupuncture-pain-v19-deployment
+  seed: 20260920                       # 与测试集抽样种子一致（已冻结的名单不会被重新抽样）
+
+paths:
+  package_dir: data/package            # 数据包（train.jsonl / 测试集 / 标注表 / 评分手册 / 穴位库 ...）
+  painrag_kb: data/painrag_kb          # 分域知识库：west/tcm/acupoint/concept 四集合 + BM25 + 稠密索引
+  work_dir: work
+
+models:
+  base_llm: models/Qwen3.5-4B
+  chat_template_kwargs: {enable_thinking: false}
+  embedding: models/bge-m3
+
+outputs:
+  lora_adapter: work/lora_sft_v19
+  rag_index: data/painrag_kb
+
+
+train:
+  qlora: true
+  bf16: true
+  fp16: false
+  tf32: true
+  gradient_checkpointing: true
+  seed: 20260920
+ 
+  chat_template_kwargs: {enable_thinking: false}
+ 
+  loss_mask_sections: []
+  loss_mask_keep_prefixes: [【急危重症警示】, 【妊娠禁忌】, 育龄女性]
+  loss_upweight_prefixes: [【急危重症警示】, 【妊娠禁忌】]
+  loss_upweight: 10
+  point_location: true
+  differential_note: true
+  differential_max_dd: 3
+  differential_max_red: 2
+  null_warning_line: true
+  redflag_oversample: 3
+ 
+  target_modules: [q_proj, k_proj, v_proj, o_proj, in_proj_qkv, in_proj_z, out_proj, gate_proj, up_proj, down_proj]
+  sft_data: v19
+  rag_fraction: 0.5
+  force_differential_rag: true
+  rag_mode: replace
+  sft:
+    max_length: 10240
+    epochs: 3
+    learning_rate: 5.0e-5
+    per_device_train_batch_size: 1
+    per_device_eval_batch_size: 1
+    target_global_batch_size: 16
+    warmup_ratio: 0.05
+    weight_decay: 0.01
+    logging_steps: 5
+    eval_steps: 40
+    save_steps: 40
+    save_total_limit: 3
+    lora_r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+  val_fraction: 0.10
+  cv_folds: 5
+
+rag:
+  device: cpu
+  batch_size: 32
+  top_concepts: 2
+  min_score: 0.30
+  domains: [west, tcm]
+  budget: {west: 3200, tcm: 2000, acupoint: 600}
+  max_chars: 6000
+  cards:
+    max_points: 12
+    max_chars: 1800
+    manipulation_cards: true
+    max_manip_cards: 4
+    manip_max_chars: 1200
+    safety_check: true
+    differential_card: true
+    differential_card_max_chars: 1400
+    differential_max_dd: 3
+    differential_max_red: 2
+    differential_min_model_hits: 2
+    differential_retry_once: true
+    differential_retry_top_k: 3
+    differential_retry_max_predictions: 3
+    differential_retry_min_card_precision: 0.80
+    guideline_safety: true
+    guideline_safety_max_chars: 1100
+    differential_guard: true
+    patient_redflag_guard: true
+generation:
+  precision: bf16
+  merge_lora: true
+  max_new_tokens: 2048
+  max_new_tokens_stage2: 2400
+  postprocess:
+    sex_consistency: true
+    pregnancy_list: true
+    rule_layer: true
+    operation_v18: true
+    doctor_view_v181: true
+    point_laterality_v19: true
+  repetition_penalty: 1.05
+  thinking:
+    enabled: false
+    budget_tokens: 4096
+    temperature: 0.6
+    top_p: 0.95
+    top_k: 20
+    seed: 20260920
+    early_stop_text: "\n\n思考时间有限，现在根据以上思考直接给出最终方案。\n</think>\n\n"
+  system_prompt: v3
+  loop_retry: true
+  retry_temperature: 0.7
+  no_repeat_ngram_size: 0
+  two_stage_rag: true
+arms:
+  A5:
+    backend: openai_compatible
+    base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+    model: "qwen3.5-397b-a17b"
+    api_key_env: LLM_API_KEY
+    extra_body: {enable_thinking: false}
+    stream: true
+    hf_path: ""
+teacher:
+  
+  base_url: ""
+  model: ""
+  api_key_env: LLM_API_KEY
+
+contamination:
+  n_reference_cases: 55
+  prefix_fraction: 0.55
+  min_verbatim_chars: 25
+
+stats:
+  compare_arms: [A1, A2, A3, A4]
+  primary_endpoint: overall
+  primary_population: all               
+  contrasts: [[A1, A4], [A2, A4], [A3, A4]]
+  reference_arm: A5
+  reference_contrasts: [[A1, A5], [A2, A5], [A3, A5], [A4, A5]]
+  alpha_two_sided: 0.05
+  bootstrap: 10000
+  main_point_fraction: 0.5
+  provenance_teaching_sources: [名中医书籍, 中医成果库]
+
+rating:
+  raters: [R1, R2, R3, R4, R5, R6]
+  panels: {P1: [R1, R2, R3], P2: [R4, R5, R6]}
+  raters_per_output: 3
+  senior_raters: [R1, R4]
+  rated_arms: [A1, A2, A3, A4, A5]
+  followup_arms: [A4, A5]
+  arbitrator: majority
+  stage2_concordance: true

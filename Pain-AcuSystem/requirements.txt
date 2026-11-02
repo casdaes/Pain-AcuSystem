@@ -1,0 +1,12 @@
+torch
+transformers
+datasets
+peft
+accelerate
+bitsandbytes
+PyYAML
+numpy
+pandas
+openpyxl
+sentence-transformers
+faiss-cpu
